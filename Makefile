@@ -13,7 +13,7 @@ ifeq ($(RELEASE),1)
 endif
 VERSION := $(if $(TAG_NAME),$(TAG_NAME),$(SHA))
 BUILD_DATE := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
-BUILD_TAGS := -tags=release,viper_yaml3
+BUILD_TAGS := -tags=release
 LD_FLAGS := -X github.com/evcc-io/evcc/server.Version=$(VERSION) -X github.com/evcc-io/evcc/server.Commit=$(COMMIT) -s -w
 BUILD_ARGS := -ldflags='$(LD_FLAGS)'
 
@@ -26,6 +26,9 @@ TARGETS := arm.v6,arm.v8,amd64
 IMAGE_FILE := evcc_$(TAG_NAME).image
 IMAGE_ROOTFS := evcc_$(TAG_NAME).rootfs
 IMAGE_OPTIONS := -hostname evcc -http_port 8080 github.com/gokrazy/serial-busybox github.com/gokrazy/breakglass github.com/evcc-io/evcc
+
+# deb
+PACKAGES = ./release
 
 default: build
 
@@ -95,6 +98,16 @@ publish-release:
 	@echo Version: $(VERSION) $(SHA) $(BUILD_DATE)
 	RELEASE=1 seihon publish --dry-run=false --template docker/ci.Dockerfile --base-runtime-image alpine:$(ALPINE_VERSION) \
 	   --image-name $(DOCKER_IMAGE) -v "latest" -v "$(TAG_NAME)" --targets=$(TARGETS)
+
+apt-nightly:
+	$(foreach file, $(wildcard $(PACKAGES)/*.deb), \
+		cloudsmith push deb evcc/unstable/any-distro/any-version $(file); \
+	)
+
+apt-release:
+	$(foreach file, $(wildcard $(PACKAGES)/*.deb), \
+		cloudsmith push deb evcc/stable/any-distro/any-version $(file); \
+	)
 
 # gokrazy image
 prepare-image:

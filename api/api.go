@@ -160,7 +160,7 @@ type VehicleRange interface {
 
 // VehicleClimater provides climatisation data
 type VehicleClimater interface {
-	Climater() (active bool, outsideTemp float64, targetTemp float64, err error)
+	Climater() (active bool, outsideTemp, targetTemp float64, err error)
 }
 
 // VehicleOdometer returns the vehicles milage
@@ -179,8 +179,8 @@ type VehicleChargeController interface {
 	StopCharge() error
 }
 
-// AlarmClock provides wakeup calls to the vehicle with an API call or a CP interrupt from the charger
-type AlarmClock interface {
+// Resurrector provides wakeup calls to the vehicle with an API call or a CP interrupt from the charger
+type Resurrector interface {
 	WakeUp() error
 }
 

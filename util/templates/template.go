@@ -181,9 +181,7 @@ func (t *Template) Defaults(renderMode string) map[string]interface{} {
 	return values
 }
 
-// Update the default value of a param
-//
-// Used for modbus params, which are dynamically added after selecting the interface
+// SetParamDefault updates the default value of a param
 func (t *Template) SetParamDefault(name string, value string) {
 	for i, p := range t.Params {
 		if p.Name == name {
@@ -292,7 +290,7 @@ func (t *Template) RenderResult(renderMode string, other map[string]interface{})
 		return nil, values, err
 	}
 
-	values = t.ModbusValues(renderMode, false, values)
+	t.ModbusValues(renderMode, values)
 
 	// add the common templates
 	for _, v := range t.ConfigDefaults.Presets {
@@ -326,14 +324,16 @@ func (t *Template) RenderResult(renderMode string, other map[string]interface{})
 	}
 
 	tmpl := template.New("yaml")
-	var funcMap template.FuncMap = map[string]interface{}{}
-	// copied from: https://github.com/helm/helm/blob/8648ccf5d35d682dcd5f7a9c2082f0aaf071e817/pkg/engine/engine.go#L147-L154
-	funcMap["include"] = func(name string, data interface{}) (string, error) {
-		buf := bytes.NewBuffer(nil)
-		if err := tmpl.ExecuteTemplate(buf, name, data); err != nil {
-			return "", err
-		}
-		return buf.String(), nil
+	funcMap := template.FuncMap{
+		// include function
+		// copied from: https://github.com/helm/helm/blob/8648ccf5d35d682dcd5f7a9c2082f0aaf071e817/pkg/engine/engine.go#L147-L154
+		"include": func(name string, data interface{}) (string, error) {
+			buf := bytes.NewBuffer(nil)
+			if err := tmpl.ExecuteTemplate(buf, name, data); err != nil {
+				return "", err
+			}
+			return buf.String(), nil
+		},
 	}
 
 	tmpl, err := tmpl.Funcs(template.FuncMap(sprig.FuncMap())).Funcs(funcMap).Parse(t.Render)
