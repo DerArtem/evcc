@@ -1,7 +1,5 @@
 <template>
 	<div class="d-flex flex-column site">
-		<OfflineIndicator v-if="offline" />
-
 		<div class="container px-4 top-area">
 			<div class="d-flex justify-content-between align-items-center my-3">
 				<h1 class="d-block my-0">
@@ -15,8 +13,12 @@
 			<Energyflow v-bind="energyflow" />
 		</div>
 		<div class="d-flex flex-column justify-content-between content-area">
-			<Loadpoints class="mt-1 mt-sm-2 flex-grow-1" :loadpoints="loadpoints" />
-			<Vehicles v-if="$hiddenFeatures" />
+			<Loadpoints
+				class="mt-1 mt-sm-2 flex-grow-1"
+				:loadpoints="loadpoints"
+				:vehicles="vehicles"
+			/>
+			<Vehicles v-if="showParkingLot" />
 			<Footer v-bind="footer"></Footer>
 		</div>
 	</div>
@@ -25,7 +27,6 @@
 <script>
 import "@h2d2/shopicons/es/regular/arrowup";
 import TopNavigation from "./TopNavigation.vue";
-import OfflineIndicator from "./OfflineIndicator.vue";
 import Notifications from "./Notifications.vue";
 import Energyflow from "./Energyflow/Energyflow.vue";
 import Loadpoints from "./Loadpoints.vue";
@@ -40,7 +41,6 @@ export default {
 		Loadpoints,
 		Energyflow,
 		Footer,
-		OfflineIndicator,
 		Notifications,
 		TopNavigation,
 		Vehicles,
@@ -64,6 +64,7 @@ export default {
 		gridCurrents: Array,
 		prioritySoC: Number,
 		siteTitle: String,
+		vehicles: Array,
 
 		auth: Object,
 
@@ -102,6 +103,10 @@ export default {
 		topNavigation: function () {
 			const vehicleLogins = this.auth ? this.auth.vehicles : {};
 			return { vehicleLogins };
+		},
+		showParkingLot: function () {
+			// work in progess
+			return false;
 		},
 		footer: function () {
 			return {

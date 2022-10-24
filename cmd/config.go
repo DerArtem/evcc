@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,18 +22,39 @@ import (
 	"github.com/evcc-io/evcc/vehicle/wrapper"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"golang.org/x/exp/maps"
 )
+
+var conf = config{
+	Interval: 10 * time.Second,
+	Log:      "info",
+	Network: networkConfig{
+		Schema: "http",
+		Host:   "evcc.local",
+		Port:   7070,
+	},
+	Mqtt: mqttConfig{
+		Topic: "evcc",
+	},
+	Database: dbConfig{
+		Type: "sqlite",
+		Dsn:  "~/.evcc/evcc.db",
+	},
+}
 
 type config struct {
 	URI          interface{} // TODO deprecated
 	Network      networkConfig
 	Log          string
 	SponsorToken string
+	Telemetry    bool
+	Plant        string // telemetry plant id
 	Metrics      bool
 	Profile      bool
 	Levels       map[string]string
 	Interval     time.Duration
 	Mqtt         mqttConfig
+	Database     dbConfig
 	Javascript   map[string]interface{}
 	Influx       server.InfluxConfig
 	EEBus        map[string]interface{}
@@ -46,33 +68,14 @@ type config struct {
 	LoadPoints   []map[string]interface{}
 }
 
-type networkConfig struct {
-	Schema string
-	Host   string
-	Port   int
-}
-
-func (c networkConfig) HostPort() string {
-	if c.Schema == "http" && c.Port == 80 || c.Schema == "https" && c.Port == 443 {
-		return c.Host
-	}
-	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
-}
-
-func (c networkConfig) URI() string {
-	return fmt.Sprintf("%s://%s", c.Schema, c.HostPort())
-}
-
 type mqttConfig struct {
 	mqtt.Config `mapstructure:",squash"`
 	Topic       string
 }
 
-func (conf *mqttConfig) RootTopic() string {
-	if conf.Topic != "" {
-		return conf.Topic
-	}
-	return "evcc"
+type dbConfig struct {
+	Type string
+	Dsn  string
 }
 
 type qualifiedConfig struct {
@@ -96,6 +99,23 @@ type tariffConfig struct {
 	FeedIn   typedConfig
 }
 
+type networkConfig struct {
+	Schema string
+	Host   string
+	Port   int
+}
+
+func (c networkConfig) HostPort() string {
+	if c.Schema == "http" && c.Port == 80 || c.Schema == "https" && c.Port == 443 {
+		return c.Host
+	}
+	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
+}
+
+func (c networkConfig) URI() string {
+	return fmt.Sprintf("%s://%s", c.Schema, c.HostPort())
+}
+
 // ConfigProvider provides configuration items
 type ConfigProvider struct {
 	meters   map[string]api.Meter
@@ -110,7 +130,7 @@ func (cp *ConfigProvider) TrackVisitors() {
 }
 
 // Meter provides meters by name
-func (cp *ConfigProvider) Meter(name string) api.Meter {
+func (cp *ConfigProvider) Meter(name string) (api.Meter, error) {
 	if meter, ok := cp.meters[name]; ok {
 		// track duplicate usage https://github.com/evcc-io/evcc/issues/1744
 		if cp.visited != nil {
@@ -120,28 +140,25 @@ func (cp *ConfigProvider) Meter(name string) api.Meter {
 			cp.visited[name] = true
 		}
 
-		return meter
+		return meter, nil
 	}
-	log.FATAL.Fatalf("invalid meter: %s", name)
-	return nil
+	return nil, fmt.Errorf("meter does not exist: %s", name)
 }
 
 // Charger provides chargers by name
-func (cp *ConfigProvider) Charger(name string) api.Charger {
+func (cp *ConfigProvider) Charger(name string) (api.Charger, error) {
 	if charger, ok := cp.chargers[name]; ok {
-		return charger
+		return charger, nil
 	}
-	log.FATAL.Fatalf("invalid charger: %s", name)
-	return nil
+	return nil, fmt.Errorf("charger does not exist: %s", name)
 }
 
 // Vehicle provides vehicles by name
-func (cp *ConfigProvider) Vehicle(name string) api.Vehicle {
+func (cp *ConfigProvider) Vehicle(name string) (api.Vehicle, error) {
 	if vehicle, ok := cp.vehicles[name]; ok {
-		return vehicle
+		return vehicle, nil
 	}
-	log.FATAL.Fatalf("invalid vehicle: %s", name)
-	return nil
+	return nil, fmt.Errorf("vehicle does not exist: %s", name)
 }
 
 func (cp *ConfigProvider) configure(conf config) error {
@@ -209,10 +226,10 @@ func (cp *ConfigProvider) configureVehicles(conf config) error {
 		}
 
 		// ensure vehicle config has title
-		ccWithTitle := struct {
+		var ccWithTitle struct {
 			Title string
 			Other map[string]interface{} `mapstructure:",remain"`
-		}{}
+		}
 
 		if err := util.DecodeOther(cc.Other, &ccWithTitle); err != nil {
 			return err
@@ -239,7 +256,7 @@ func (cp *ConfigProvider) configureVehicles(conf config) error {
 	return nil
 }
 
-// webControl handles routing for devices. For now only api.ProviderLogin related routes
+// webControl handles routing for devices. For now only api.AuthProvider related routes
 func (cp *ConfigProvider) webControl(conf networkConfig, router *mux.Router, paramC chan<- util.Param) {
 	auth := router.PathPrefix("/oauth").Subrouter()
 	auth.Use(handlers.CompressHandler)
@@ -256,9 +273,15 @@ func (cp *ConfigProvider) webControl(conf networkConfig, router *mux.Router, par
 	baseURI := conf.URI()
 	baseAuthURI := fmt.Sprintf("%s/oauth", baseURI)
 
+	// stable map iteration
+	keys := maps.Keys(cp.vehicles)
+	sort.Strings(keys)
+
 	var id int
-	for _, v := range cp.vehicles {
-		if provider, ok := v.(api.ProviderLogin); ok {
+	for _, k := range keys {
+		v := cp.vehicles[k]
+
+		if provider, ok := v.(api.AuthProvider); ok {
 			id += 1
 
 			basePath := fmt.Sprintf("vehicles/%d", id)

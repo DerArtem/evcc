@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -10,13 +12,16 @@ import (
 	"time"
 
 	"github.com/evcc-io/evcc/api"
+	"github.com/evcc-io/evcc/core/db"
 	"github.com/evcc-io/evcc/core/loadpoint"
 	"github.com/evcc-io/evcc/core/site"
+	dbserver "github.com/evcc-io/evcc/server/db"
 	"github.com/evcc-io/evcc/util"
+	"github.com/evcc-io/evcc/util/locale"
 	"github.com/gorilla/mux"
 )
 
-func indexHandler(site site.API) http.HandlerFunc {
+func indexHandler() http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=UTF-8")
 
@@ -34,9 +39,8 @@ func indexHandler(site site.API) http.HandlerFunc {
 		}
 
 		if err := t.Execute(w, map[string]interface{}{
-			"Version":    Version,
-			"Commit":     Commit,
-			"Configured": len(site.LoadPoints()),
+			"Version": Version,
+			"Commit":  Commit,
 		}); err != nil {
 			log.ERROR.Println("httpd: failed to render main page:", err.Error())
 		}
@@ -58,7 +62,6 @@ func jsonWrite(w http.ResponseWriter, content interface{}) {
 }
 
 func jsonResult(w http.ResponseWriter, res interface{}) {
-	w.WriteHeader(http.StatusOK)
 	jsonWrite(w, map[string]interface{}{"result": res})
 }
 
@@ -67,10 +70,21 @@ func jsonError(w http.ResponseWriter, status int, err error) {
 	jsonWrite(w, map[string]interface{}{"error": err.Error()})
 }
 
+func csvResult(ctx context.Context, w http.ResponseWriter, res any) {
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="sessions.csv"`)
+
+	if ww, ok := res.(api.CsvWriter); ok {
+		ww.WriteCsv(ctx, w)
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
 // healthHandler returns current charge mode
 func healthHandler(site site.API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !site.Healthy() {
+		if site == nil || !site.Healthy() {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -135,6 +149,29 @@ func stateHandler(cache *util.Cache) http.HandlerFunc {
 		}
 		jsonResult(w, res)
 	}
+}
+
+// sessionHandler returns the list of charging sessions
+func sessionHandler(w http.ResponseWriter, r *http.Request) {
+	if dbserver.Instance == nil {
+		jsonError(w, http.StatusBadRequest, errors.New("database offline"))
+		return
+	}
+
+	var res db.Sessions
+	if txn := dbserver.Instance.Where("charged_kwh>=0.05").Order("created desc").Find(&res); txn.Error != nil {
+		jsonError(w, http.StatusInternalServerError, txn.Error)
+		return
+	}
+
+	if r.URL.Query().Get("format") == "csv" {
+		accept := r.Header.Get("Accept-Language")
+		ctx := context.WithValue(context.Background(), locale.Locale, accept)
+		csvResult(ctx, w, &res)
+		return
+	}
+
+	jsonResult(w, res)
 }
 
 // chargeModeHandler updates charge mode
@@ -244,14 +281,14 @@ func targetChargeRemoveHandler(loadpoint loadpoint.API) http.HandlerFunc {
 }
 
 // vehicleHandler sets active vehicle
-func vehicleHandler(loadpoint loadpoint.API) http.HandlerFunc {
+func vehicleHandler(site site.API, loadpoint loadpoint.API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 
 		valS, ok := vars["vehicle"]
 		val, err := strconv.Atoi(valS)
 
-		vehicles := loadpoint.GetVehicles()
+		vehicles := site.GetVehicles()
 		if !ok || val >= len(vehicles) || err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -273,6 +310,15 @@ func vehicleHandler(loadpoint loadpoint.API) http.HandlerFunc {
 func vehicleRemoveHandler(loadpoint loadpoint.API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		loadpoint.SetVehicle(nil)
+		res := struct{}{}
+		jsonResult(w, res)
+	}
+}
+
+// vehicleDetectHandler starts vehicle detection
+func vehicleDetectHandler(loadpoint loadpoint.API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		loadpoint.StartVehicleDetection()
 		res := struct{}{}
 		jsonResult(w, res)
 	}

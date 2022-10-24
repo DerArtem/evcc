@@ -31,7 +31,7 @@ func (lp *LoadPoint) SetMode(mode api.ChargeMode) {
 	defer lp.Unlock()
 
 	if _, err := api.ChargeModeString(mode.String()); err != nil {
-		lp.log.WARN.Printf("invalid charge mode: %s", string(mode))
+		lp.log.ERROR.Printf("invalid charge mode: %s", string(mode))
 		return
 	}
 
@@ -49,16 +49,51 @@ func (lp *LoadPoint) SetMode(mode api.ChargeMode) {
 	}
 }
 
+// GetTargetSoC returns loadpoint charge target energy
+func (lp *LoadPoint) GetTargetEnergy() int {
+	lp.Lock()
+	defer lp.Unlock()
+	return lp.SoC.target
+}
+
+// setTargetEnergy sets loadpoint charge target energy (no mutex)
+func (lp *LoadPoint) setTargetEnergy(energy int) {
+	lp.targetEnergy = energy
+	// TODO soctimer
+	// if lp.socTimer != nil {
+	// lp.socTimer.Energy = energy
+	// }
+	lp.publish("targetEnergy", energy)
+}
+
+// SetTargetEnergy sets loadpoint charge target energy
+func (lp *LoadPoint) SetTargetEnergy(energy int) {
+	lp.Lock()
+	defer lp.Unlock()
+
+	lp.log.DEBUG.Println("set target energy:", energy)
+
+	// apply immediately
+	if lp.targetEnergy != energy {
+		lp.setTargetEnergy(energy)
+		lp.requestUpdate()
+	}
+}
+
 // GetTargetSoC returns loadpoint charge target soc
 func (lp *LoadPoint) GetTargetSoC() int {
 	lp.Lock()
 	defer lp.Unlock()
-	return lp.SoC.Target
+	return lp.SoC.target
 }
 
+// setTargetSoC sets loadpoint charge target soc (no mutex)
 func (lp *LoadPoint) setTargetSoC(soc int) {
-	lp.SoC.Target = soc
-	lp.socTimer.SoC = soc
+	lp.SoC.target = soc
+	// test guard
+	if lp.socTimer != nil {
+		lp.socTimer.SoC = soc
+	}
 	lp.publish("targetSoC", soc)
 }
 
@@ -70,7 +105,7 @@ func (lp *LoadPoint) SetTargetSoC(soc int) {
 	lp.log.DEBUG.Println("set target soc:", soc)
 
 	// apply immediately
-	if lp.SoC.Target != soc {
+	if lp.SoC.target != soc {
 		lp.setTargetSoC(soc)
 		lp.requestUpdate()
 	}
@@ -80,7 +115,13 @@ func (lp *LoadPoint) SetTargetSoC(soc int) {
 func (lp *LoadPoint) GetMinSoC() int {
 	lp.Lock()
 	defer lp.Unlock()
-	return lp.SoC.Min
+	return lp.SoC.min
+}
+
+// setMinSoC sets loadpoint charge min soc (no mutex)
+func (lp *LoadPoint) setMinSoC(soc int) {
+	lp.SoC.min = soc
+	lp.publish("minSoC", soc)
 }
 
 // SetMinSoC sets loadpoint charge minimum soc
@@ -91,9 +132,8 @@ func (lp *LoadPoint) SetMinSoC(soc int) {
 	lp.log.DEBUG.Println("set min soc:", soc)
 
 	// apply immediately
-	if lp.SoC.Min != soc {
-		lp.SoC.Min = soc
-		lp.publish("minSoC", soc)
+	if lp.SoC.min != soc {
+		lp.setMinSoC(soc)
 		lp.requestUpdate()
 	}
 }
@@ -108,7 +148,7 @@ func (lp *LoadPoint) GetPhases() int {
 // SetPhases sets loadpoint enabled phases
 func (lp *LoadPoint) SetPhases(phases int) error {
 	// limit auto mode (phases=0) to scalable charger
-	if _, ok := lp.charger.(api.ChargePhases); !ok && phases == 0 {
+	if _, ok := lp.charger.(api.PhaseSwitcher); !ok && phases == 0 {
 		return fmt.Errorf("invalid number of phases: %d", phases)
 	}
 
@@ -117,12 +157,15 @@ func (lp *LoadPoint) SetPhases(phases int) error {
 	}
 
 	// set new default
-	lp.setDefaultPhases(phases)
+	lp.log.DEBUG.Println("set phases:", phases)
+	lp.setConfiguredPhases(phases)
 
 	// apply immediately if not 1p3p
-	if _, ok := lp.charger.(api.ChargePhases); !ok {
+	if _, ok := lp.charger.(api.PhaseSwitcher); !ok {
 		lp.setPhases(phases)
 	}
+
+	lp.requestUpdate()
 
 	return nil
 }
@@ -135,7 +178,7 @@ func (lp *LoadPoint) SetTargetCharge(finishAt time.Time, soc int) {
 	lp.log.DEBUG.Printf("set target charge: %d @ %v", soc, finishAt)
 
 	// apply immediately
-	if lp.socTimer.Time != finishAt || lp.SoC.Target != soc {
+	if lp.socTimer.Time != finishAt || lp.SoC.target != soc {
 		lp.socTimer.Set(finishAt)
 
 		// don't remove soc
@@ -260,13 +303,6 @@ func (lp *LoadPoint) GetRemainingEnergy() float64 {
 	return lp.chargeRemainingEnergy
 }
 
-// GetVehicles is the list of vehicles
-func (lp *LoadPoint) GetVehicles() []api.Vehicle {
-	lp.Lock()
-	defer lp.Unlock()
-	return lp.vehicles
-}
-
 // SetVehicle sets the active vehicle
 func (lp *LoadPoint) SetVehicle(vehicle api.Vehicle) {
 	// TODO develop universal locking approach
@@ -280,4 +316,16 @@ func (lp *LoadPoint) SetVehicle(vehicle api.Vehicle) {
 
 	// disable auto-detect
 	lp.stopVehicleDetection()
+}
+
+// StartVehicleDetection allows triggering vehicle detection for debugging purposes
+func (lp *LoadPoint) StartVehicleDetection() {
+	// reset vehicle
+	lp.setActiveVehicle(nil)
+
+	lp.Lock()
+	defer lp.Unlock()
+
+	// start auto-detect
+	lp.startVehicleDetection()
 }

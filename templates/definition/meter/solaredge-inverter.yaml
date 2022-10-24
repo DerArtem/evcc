@@ -4,11 +4,10 @@ products:
     description:
       de: Wechselrichter
       en: Inverter
-guidedsetup:
-  enable: true
 params:
   - name: usage
     choice: ["grid", "pv"]
+    allinone: true
   - name: modbus
     choice: ["tcpip"]
     id: 1
@@ -18,11 +17,14 @@ render: |
   type: custom
   power:
     source: modbus
-    model: sunspec
     {{- include "modbus" . | indent 2 }}
     timeout: {{ .timeout }}
   {{- if eq .usage "grid" }}
     subdevice: 1
+    model: sunspec
     value: 203:W # sunspec 3-phase meter power reading
     scale: -1
-  {{- end -}}
+  {{- else }}
+    model: sunspec
+    value: Power
+  {{- end }}

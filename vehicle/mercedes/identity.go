@@ -76,7 +76,7 @@ func (v *Identity) invalidToken() {
 	}
 }
 
-var _ api.ProviderLogin = (*Identity)(nil)
+var _ api.AuthProvider = (*Identity)(nil)
 
 func (v *Identity) SetCallbackParams(baseURL, redirectURL string, authC chan<- bool) {
 	v.baseURL = baseURL
@@ -112,7 +112,7 @@ func (v *Identity) LogoutHandler() http.HandlerFunc {
 }
 
 func (v *Identity) callbackHandler(w http.ResponseWriter, r *http.Request) {
-	v.log.TRACE.Println("callback request retrieved")
+	v.log.DEBUG.Println("callback request received")
 
 	data, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
