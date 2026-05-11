@@ -29,13 +29,6 @@ var aggregateFormats = map[string]string{
 	"month": "%Y-%m",
 }
 
-var aggregateGoFormats = map[string]string{
-	"15m":   "2006-01-02 15:04",
-	"hour":  "2006-01-02 15:00",
-	"day":   "2006-01-02",
-	"month": "2006-01",
-}
-
 var aggregateDurations = map[string]func(time.Time) time.Time{
 	"15m":   func(t time.Time) time.Time { return t.Add(15 * time.Minute) },
 	"hour":  func(t time.Time) time.Time { return t.Add(time.Hour) },
@@ -61,13 +54,18 @@ func QueryImportEnergy(from, to time.Time, aggregate string, grouped bool) ([]Se
 		Name   string
 		Group  string
 		Bucket string
+		Start  SqlTime
 		Import float64
 		Export float64
 	}
 
 	tx := db.Instance.Table("meters m").
-		Select(`e.name, e."group", strftime(?, m.ts, 'unixepoch', 'localtime') AS bucket,
-			COALESCE(SUM(m."import"), 0) AS import, COALESCE(SUM(m.export), 0) AS export`, format).
+		Select(`e.name, e."group", 
+			strftime(?, m.ts, 'unixepoch', 'localtime') AS bucket,
+			MIN(m.ts) AS start,
+			COALESCE(SUM(m."import"), 0) AS import,
+			COALESCE(SUM(m.export), 0) AS export`,
+			format).
 		Joins("JOIN entities e ON m.meter = e.id").
 		Group(groupCols).
 		Order(groupCols)
@@ -86,11 +84,6 @@ func QueryImportEnergy(from, to time.Time, aggregate string, grouped bool) ([]Se
 
 	var res []Series
 	for _, r := range rows {
-		start, err := time.ParseInLocation(aggregateGoFormats[aggregate], r.Bucket, from.Location())
-		if err != nil {
-			return nil, err
-		}
-
 		name := r.Name
 		if grouped {
 			name = ""
@@ -102,8 +95,8 @@ func QueryImportEnergy(from, to time.Time, aggregate string, grouped bool) ([]Se
 
 		s := &res[len(res)-1]
 		s.Data = append(s.Data, Slot{
-			Start:  start,
-			End:    addDuration(start),
+			Start:  time.Time(r.Start),
+			End:    addDuration(time.Time(r.Start)),
 			Import: r.Import,
 			Export: r.Export,
 		})
