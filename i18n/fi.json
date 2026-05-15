@@ -1191,7 +1191,7 @@
       "batteryGridChargeLimit": "Milloin ladataan verkosta",
       "batteryHold": "Akku (lukittu)",
       "batteryTooltip": "{energy} / {total} ({soc})",
-      "forecast": "Ennuste: ",
+      "forecast": "Ennuste",
       "forecastTooltip": "ennuste: jäljellä oleva aurinkotuotanto tänään",
       "gridImport": "Kulutus sähköverkosta",
       "homePower": "Kodin sähkönkulutus",
